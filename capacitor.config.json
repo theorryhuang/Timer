@@ -1,0 +1,10 @@
+{
+  "appId": "com.workouttimer.app",
+  "appName": "Workout Timer",
+  "webDir": "dist",
+  "backgroundColor": "#09090b",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#09090b"
+  }
+}
