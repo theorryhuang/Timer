@@ -96,9 +96,46 @@ function silentWavUrl(): string {
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
 }
 
-function bypassSilentSwitch() {
+/**
+ * Safari can't both mix with other apps' music and play through the silent switch.
+ * "Mix with music" (default): ambient audio — music keeps playing, but the ringer
+ * switch on silent mutes our sounds. Off: media-playback mode — plays on silent, but
+ * iOS pauses other music. The native app does both (AppDelegate: .playback + .mixWithOthers).
+ */
+const MIX_KEY = 'mixWithMusic'
+let mixWithMusic = readMix()
+
+function readMix(): boolean {
+  try {
+    return localStorage.getItem(MIX_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+export function getMixWithMusic() {
+  return mixWithMusic
+}
+
+/** Call from a tap (switching to "play on silent" on older iOS starts an <audio> element). */
+export function setMixWithMusic(on: boolean) {
+  mixWithMusic = on
+  try {
+    localStorage.setItem(MIX_KEY, on ? '1' : '0')
+  } catch {
+    // ignore
+  }
+  applyAudioMode()
+}
+
+function applyAudioMode() {
   if (Capacitor.isNativePlatform()) return
   const nav = navigator as Navigator & { audioSession?: { type: string } }
+  if (mixWithMusic) {
+    if (nav.audioSession && nav.audioSession.type !== 'ambient') nav.audioSession.type = 'ambient'
+    if (keepAlive && !keepAlive.paused) keepAlive.pause()
+    return
+  }
   if (nav.audioSession) {
     if (nav.audioSession.type !== 'playback') nav.audioSession.type = 'playback'
     return
@@ -137,8 +174,8 @@ export function startFreshAudio() {
     ctx = null
   }
   notRunningSince = 0
-  // Restart the silent loop too (iOS < 17), still inside the tap.
-  if (keepAlive) {
+  // Restart the silent loop too (iOS < 17, play-on-silent mode), still inside the tap.
+  if (keepAlive && !mixWithMusic) {
     keepAlive.pause()
     keepAlive.currentTime = 0
   }
@@ -155,6 +192,7 @@ export function audioDebug(): string {
     `made:${contextsCreated}`,
     `skip:${skippedSounds}/${v.skippedClips}`,
     `clips:${v.clips}`,
+    `mix:${mixWithMusic ? 'on' : 'off'}`,
     `session:${nav.audioSession ? nav.audioSession.type : 'n/a'}`,
     `loop:${keepAlive ? (keepAlive.paused ? 'paused' : 'on') : 'n/a'}`,
   ].join(' ')
@@ -162,7 +200,7 @@ export function audioDebug(): string {
 
 /** Must be called from a user gesture (tap) so iOS allows audio. */
 export function unlockAudio() {
-  bypassSilentSwitch()
+  applyAudioMode()
   // A context iOS left "interrupted" (or that stayed suspended through an earlier tap)
   // often never recovers on older iOS. Replace it; this runs inside a tap, so the new one may start.
   if (ctx) {
@@ -283,7 +321,7 @@ function tone(c: AudioContext, o: ToneOpts) {
 export function playSound(id: SoundId, offset = 0): number {
   if (id === 'none') return 0
   // iOS can pause the silent loop (calls, notifications); try to restart it.
-  if (keepAlive?.paused) void keepAlive.play()?.catch(() => {})
+  if (!mixWithMusic && keepAlive?.paused) void keepAlive.play()?.catch(() => {})
   const c = getCtx()
   if (!canPlayNow(c)) {
     skippedSounds++
