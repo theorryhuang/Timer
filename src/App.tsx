@@ -4,8 +4,10 @@ import { TimerEditor } from './components/TimerEditor'
 import { TimerList } from './components/TimerList'
 import { unlockAudio } from './lib/sounds'
 import { unlockSpeech } from './lib/speech'
+import { keepScreenOn } from './lib/wake'
+import { prefetchVoice } from './lib/voice'
 import { loadTimers, saveTimers } from './lib/storage'
-import { newTimer, type WorkoutTimer } from './lib/types'
+import { newTimer, uid, type WorkoutTimer } from './lib/types'
 
 type View =
   | { kind: 'list' }
@@ -18,6 +20,7 @@ export default function App() {
 
   useEffect(() => {
     void loadTimers().then(setTimers)
+    prefetchVoice()
   }, [])
 
   const update = (next: WorkoutTimer[]) => {
@@ -49,7 +52,7 @@ export default function App() {
         }}
         onDuplicate={() => {
           const now = Date.now()
-          const copy: WorkoutTimer = { ...timer, id: crypto.randomUUID(), name: `${timer.name} copy`, createdAt: now, updatedAt: now }
+          const copy: WorkoutTimer = { ...timer, id: uid(), name: `${timer.name} copy`, createdAt: now, updatedAt: now }
           update([...timers, copy])
           setView({ kind: 'edit', timer: copy, isNew: false })
         }}
@@ -62,8 +65,10 @@ export default function App() {
       timers={timers}
       onNew={() => setView({ kind: 'edit', timer: newTimer(), isNew: true })}
       onEdit={(t) => setView({ kind: 'edit', timer: t, isNew: false })}
+      onDelete={(t) => update(timers.filter((x) => x.id !== t.id))}
       onStart={(t) => {
         // Must happen inside the tap so iOS allows sound and speech.
+        keepScreenOn()
         unlockAudio()
         unlockSpeech()
         setView({ kind: 'run', timer: t })

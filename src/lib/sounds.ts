@@ -1,3 +1,6 @@
+import { Capacitor } from '@capacitor/core'
+import { canPlayNow, loadVoice, markUnlocked, soundOutput } from './voice'
+
 /**
  * Synthesized transition sounds (Web Audio). No audio files needed.
  * Each sound schedules itself `offset` seconds from now and returns its length.
@@ -57,9 +60,87 @@ function getCtx(): AudioContext {
   return ctx
 }
 
+/**
+ * iOS Safari mutes Web Audio when the silent switch is on. Playing an <audio>
+ * element switches the page to "media playback", which makes Web Audio audible
+ * too. So during a workout we loop a silent clip. iOS 17+ has a direct API for this.
+ * Not needed in the native app: AppDelegate sets the audio session there.
+ */
+let keepAlive: HTMLAudioElement | null = null
+
+function silentWavUrl(): string {
+  const rate = 8000
+  const samples = rate / 2 // 0.5 s
+  const buf = new ArrayBuffer(44 + samples)
+  const v = new DataView(buf)
+  const str = (o: number, t: string) => {
+    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i))
+  }
+  str(0, 'RIFF')
+  v.setUint32(4, 36 + samples, true)
+  str(8, 'WAVE')
+  str(12, 'fmt ')
+  v.setUint32(16, 16, true)
+  v.setUint16(20, 1, true) // PCM
+  v.setUint16(22, 1, true) // mono
+  v.setUint32(24, rate, true)
+  v.setUint32(28, rate, true)
+  v.setUint16(32, 1, true)
+  v.setUint16(34, 8, true) // 8-bit
+  str(36, 'data')
+  v.setUint32(40, samples, true)
+  for (let i = 0; i < samples; i++) v.setUint8(44 + i, 128) // 8-bit silence
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
+}
+
+function bypassSilentSwitch() {
+  if (Capacitor.isNativePlatform()) return
+  const nav = navigator as Navigator & { audioSession?: { type: string } }
+  if (nav.audioSession) {
+    if (nav.audioSession.type !== 'playback') nav.audioSession.type = 'playback'
+    return
+  }
+  if (!keepAlive) {
+    keepAlive = document.createElement('audio')
+    keepAlive.setAttribute('x-webkit-airplay', 'deny')
+    keepAlive.setAttribute('playsinline', '')
+    keepAlive.preload = 'auto'
+    keepAlive.loop = true
+    keepAlive.src = silentWavUrl()
+  }
+  if (keepAlive.paused) void keepAlive.play()?.catch(() => {})
+}
+
+/**
+ * Note: we deliberately never switch the audio mode back after a workout
+ * (no audioSession 'auto', no pausing for its own sake). Switching it on and off
+ * between workouts interrupted Web Audio on older iPhones.
+ */
+
+/** When the context last went from running to not running (0 = it's running). */
+let notRunningSince = 0
 /** Must be called from a user gesture (tap) so iOS allows audio. */
 export function unlockAudio() {
+  bypassSilentSwitch()
+  // A context iOS left "interrupted" (or that stayed suspended through an earlier tap)
+  // often never recovers on older iOS. Replace it; this runs inside a tap, so the new one may start.
+  if (ctx) {
+    const state = ctx.state as string
+    if (state === 'running') notRunningSince = 0
+    else if (!notRunningSince) notRunningSince = performance.now()
+    const stuck = state === 'interrupted' || state === 'closed' || (notRunningSince > 0 && performance.now() - notRunningSince > 1500)
+    if (stuck) {
+      try {
+        void ctx.close()
+      } catch {
+        // ignore
+      }
+      ctx = null
+      notRunningSince = 0
+    }
+  }
   const c = getCtx()
+  markUnlocked()
   if (c.state !== 'running') void c.resume()
   // Play a silent buffer: required by older iOS WebKit to fully unlock.
   const buf = c.createBuffer(1, 1, 22050)
@@ -67,6 +148,48 @@ export function unlockAudio() {
   src.buffer = buf
   src.connect(c.destination)
   src.start(0)
+  void loadVoice(c)
+}
+
+/**
+ * Resolves once the audio clock has been running steadily for `stableMs`
+ * (or after `timeoutMs`). On older iPhones audio takes a moment to start after the
+ * tap, and starting the screen-on video can interrupt it again right after; starting
+ * the workout clock during either lost the first second's tick.
+ */
+export function whenAudioReady(stableMs = 500, timeoutMs = 3000): Promise<void> {
+  return new Promise((resolve) => {
+    const c = getCtx()
+    const start = performance.now()
+    let lastTime = -1
+    let stableSince = 0
+    let clockAtStable = 0
+    const check = () => {
+      const now = performance.now()
+      const advancing = c.state === 'running' && lastTime >= 0 && c.currentTime >= lastTime
+      if (!advancing) stableSince = 0
+      else if (!stableSince) {
+        stableSince = now
+        clockAtStable = c.currentTime
+      }
+      // "Running" alone isn't enough: the audio clock must really have moved forward.
+      const steady = stableSince > 0 && now - stableSince >= stableMs && c.currentTime - clockAtStable >= (stableMs / 1000) * 0.5
+      if (steady || now - start > timeoutMs) {
+        resolve()
+        return
+      }
+      lastTime = c.state === 'running' ? c.currentTime : -1
+      if (c.state !== 'running') {
+        try {
+          void c.resume()
+        } catch {
+          // ignore
+        }
+      }
+      setTimeout(check, 40)
+    }
+    check()
+  })
 }
 
 interface ToneOpts {
@@ -93,7 +216,9 @@ function tone(c: AudioContext, o: ToneOpts) {
     const lfoGain = c.createGain()
     lfo.frequency.value = o.vibrato
     lfoGain.gain.value = o.freq * 0.04
-    lfo.connect(lfoGain).connect(osc.frequency)
+    // No .connect() chaining: it returns undefined (and throws) on Safari < 14.1.
+    lfo.connect(lfoGain)
+    lfoGain.connect(osc.frequency)
     lfo.start(o.start)
     lfo.stop(o.start + o.dur)
   }
@@ -107,7 +232,8 @@ function tone(c: AudioContext, o: ToneOpts) {
     g.gain.setValueAtTime(peak, o.start + Math.max(0.01, o.dur - 0.03))
     g.gain.exponentialRampToValueAtTime(0.0001, o.start + o.dur)
   }
-  osc.connect(g).connect(c.destination)
+  osc.connect(g)
+  g.connect(soundOutput(c))
   osc.start(o.start)
   osc.stop(o.start + o.dur + 0.02)
 }
@@ -115,8 +241,10 @@ function tone(c: AudioContext, o: ToneOpts) {
 /** Plays a sound `offset` seconds from now. Returns its duration in seconds. */
 export function playSound(id: SoundId, offset = 0): number {
   if (id === 'none') return 0
+  // iOS can pause the silent loop (calls, notifications); try to restart it.
+  if (keepAlive?.paused) void keepAlive.play()?.catch(() => {})
   const c = getCtx()
-  if (c.state !== 'running') void c.resume()
+  if (!canPlayNow(c)) return 0
   const t = c.currentTime + offset
 
   switch (id) {

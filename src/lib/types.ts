@@ -49,7 +49,7 @@ export const PHASE_SHORT: Record<PhaseKind, string> = {
 export function newTimer(): WorkoutTimer {
   const now = Date.now()
   return {
-    id: crypto.randomUUID(),
+    id: uid(),
     name: '',
     color: 'orange',
     phases: {
@@ -66,4 +66,16 @@ export function newTimer(): WorkoutTimer {
     createdAt: now,
     updatedAt: now,
   }
+}
+
+/** Unique id. crypto.randomUUID is missing on older iOS and on non-https pages. */
+export function uid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    try {
+      return crypto.randomUUID()
+    } catch {
+      // fall through
+    }
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }

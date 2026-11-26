@@ -18,10 +18,8 @@
     "@capacitor/haptics": "^7.0.5",
     "@capacitor/ios": "^7.6.10",
     "@capacitor/preferences": "^7.0.4",
-    "@tailwindcss/vite": "^4.3.5",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "tailwindcss": "^4.3.5"
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.10",
@@ -29,8 +27,15 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.4.27",
     "oxlint": "^1.90.0",
+    "postcss": "^8.5.33",
+    "tailwindcss": "^3.4.19",
     "typescript": "~7.0.2",
     "vite": "^8.3.6"
-  }
+  },
+  "browserslist": [
+    "safari >= 14",
+    "ios_saf >= 14"
+  ]
 }

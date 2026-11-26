@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { TextToSpeech } from '@capacitor-community/text-to-speech'
+import { playClip, stopClip } from './voice'
 
 const WORDS = [
   'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
@@ -16,7 +17,8 @@ export function speak(text: string) {
     return
   }
   if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel()
+    // Only cancel when something is playing: cancel() right before speak() can drop the new utterance in Safari.
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(text)
     u.lang = 'en-US'
     u.rate = 1.1
@@ -24,11 +26,19 @@ export function speak(text: string) {
   }
 }
 
+/** Recorded clip if loaded (exact timing); live text-to-speech only as a fallback. */
 export function speakNumber(n: number) {
+  if (playClip(String(n))) return
   speak(n < WORDS.length ? WORDS[n] : String(n))
 }
 
+export function speakComplete() {
+  if (playClip('complete')) return
+  speak('Workout complete')
+}
+
 export function stopSpeaking() {
+  stopClip()
   if (native) void TextToSpeech.stop().catch(() => {})
   else if ('speechSynthesis' in window) window.speechSynthesis.cancel()
 }

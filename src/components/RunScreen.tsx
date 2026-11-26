@@ -1,9 +1,10 @@
-import { KeepAwake } from '@capacitor-community/keep-awake'
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildSteps, formatTime } from '../lib/sequence'
-import { playSound } from '../lib/sounds'
-import { speak, speakNumber, stopSpeaking } from '../lib/speech'
+import { playSound, unlockAudio, whenAudioReady } from '../lib/sounds'
+import { allowQueuedStart } from '../lib/voice'
+import { allowScreenOff, keepScreenOn } from '../lib/wake'
+import { speakComplete, speakNumber, stopSpeaking } from '../lib/speech'
 import { PHASE_BG } from '../lib/theme'
 import { PHASE_SHORT, type WorkoutTimer } from '../lib/types'
 
@@ -27,9 +28,16 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
   const steps = useMemo(() => buildSteps(timer), [timer])
   const eng = useRef<Engine>({ idx: 0, startedAt: performance.now(), carried: 0, running: true, done: false, lastSpoken: -1, lastTick: -1 })
   const [, force] = useState(0)
+  /** False until the audio clock is running; the workout clock starts only then. */
+  const [ready, setReady] = useState(false)
+  /** Increments on every (re)start; a pending start whose number is stale is dropped. */
+  const startSeq = useRef(0)
+  const starting = useRef(false)
   /** Which confirmation sheet is open. The workout is paused while one is showing. */
   const [confirm, setConfirm] = useState<null | 'exit' | 'reset'>(null)
   const wasRunning = useRef(false)
+  /** Pending "Workout complete" announcement; cancelled if the user restarts or leaves. */
+  const completeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const elapsedNow = () => {
     const e = eng.current
@@ -52,9 +60,9 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
         e.done = true
         e.running = false
         const d = playSound(timer.transitionSound)
-        setTimeout(() => speak('Workout complete'), Math.max(300, d * 1000 + 100))
+        completeTimer.current = setTimeout(() => speakComplete(), Math.max(300, d * 1000 + 100))
         haptic()
-        void KeepAwake.allowSleep().catch(() => {})
+        allowScreenOff()
         force((n) => n + 1)
         return
       }
@@ -91,18 +99,51 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
     force((n) => n + 1)
   }, [steps, timer])
 
+  /**
+   * Start (or restart) the workout clock once audio is steadily running, so the
+   * first sounds aren't lost while an older iPhone's audio is still starting.
+   * Used for the first start, restart, and "Do it again".
+   */
+  const begin = useCallback(() => {
+    const e = eng.current
+    const seq = ++startSeq.current
+    e.running = false
+    starting.current = true
+    setReady(false)
+    void whenAudioReady().then(() => {
+      if (seq !== startSeq.current) return
+      starting.current = false
+      allowQueuedStart()
+      e.running = true
+      e.carried = 0
+      e.startedAt = performance.now()
+      setReady(true)
+      playSound(timer.transitionSound)
+      tick()
+    })
+  }, [tick, timer])
+
   useEffect(() => {
-    void KeepAwake.keepAwake().catch(() => {})
-    playSound(timer.transitionSound)
-    eng.current.startedAt = performance.now()
-    tick()
+    keepScreenOn()
+    begin()
     const id = setInterval(tick, 50)
-    return () => {
-      clearInterval(id)
-      stopSpeaking()
-      void KeepAwake.allowSleep().catch(() => {})
+    // Any tap re-arms sound and screen-on, in case iOS cut them off mid-workout.
+    const rearm = () => {
+      unlockAudio()
+      if (!eng.current.done) keepScreenOn()
     }
-  }, [tick, steps, timer])
+    document.addEventListener('touchend', rearm)
+    document.addEventListener('click', rearm)
+    return () => {
+      startSeq.current++
+      clearInterval(id)
+      document.removeEventListener('touchend', rearm)
+      document.removeEventListener('click', rearm)
+      stopSpeaking()
+      allowScreenOff()
+      clearTimeout(completeTimer.current)
+    }
+  }, [tick, begin, steps, timer])
 
   const pause = () => {
     const e = eng.current
@@ -115,7 +156,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
 
   const resume = () => {
     const e = eng.current
-    if (e.running || e.done) return
+    if (e.running || e.done || starting.current) return
     e.startedAt = performance.now()
     e.running = true
     force((n) => n + 1)
@@ -124,6 +165,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
   const goTo = (i: number) => {
     const e = eng.current
     if (i < 0 || i >= steps.length) return
+    clearTimeout(completeTimer.current)
     stopSpeaking()
     e.idx = i
     e.carried = 0
@@ -144,10 +186,19 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
   }
 
   const restart = () => {
-    eng.current.running = true
-    goTo(0)
-    void KeepAwake.keepAwake().catch(() => {})
+    keepScreenOn()
+    clearTimeout(completeTimer.current)
+    stopSpeaking()
+    const e = eng.current
+    e.idx = 0
+    e.carried = 0
+    e.lastSpoken = -1
+    e.lastTick = -1
+    e.done = false
+    haptic()
+    begin()
   }
+
 
   // ---- derived display values ----
   const e = eng.current
@@ -240,13 +291,13 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
               strokeWidth="18"
               strokeLinecap="round"
               strokeDasharray={C}
-              strokeDashoffset={C * progress}
+              strokeDashoffset={-C * progress}
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-2xl font-bold uppercase tracking-widest">{PHASE_SHORT[step.kind]}</div>
             <div className="text-[clamp(4rem,22vw,7rem)] font-bold leading-none tabular-nums">{formatTime(Math.ceil(remainingMs / 1000))}</div>
-            {!e.running && <div className="mt-2 text-sm font-semibold uppercase tracking-widest text-white/80">Paused</div>}
+            {ready && !e.running && <div className="mt-2 text-sm font-semibold uppercase tracking-widest text-white/80">Paused</div>}
           </div>
         </div>
       </div>
@@ -325,7 +376,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-24 rounded-2xl bg-black/20 px-4 py-2 text-center">
+    <div className="min-w-[6rem] rounded-2xl bg-black/20 px-4 py-2 text-center">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-white/70">{label}</div>
       <div className="text-2xl font-bold tabular-nums">{value}</div>
     </div>
