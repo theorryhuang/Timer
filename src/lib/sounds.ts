@@ -64,98 +64,17 @@ function getCtx(): AudioContext {
 }
 
 /**
- * iOS Safari mutes Web Audio when the silent switch is on. Playing an <audio>
- * element switches the page to "media playback", which makes Web Audio audible
- * too. So during a workout we loop a silent clip. iOS 17+ has a direct API for this.
- * Not needed in the native app: AppDelegate sets the audio session there.
+ * Always mix with other apps' music (e.g. Spotify keeps playing during a workout).
+ * Safari: ambient audio. Trade-off: the phone's silent mode mutes our sounds there.
+ * Don't add "play on silent" tricks (playback session, silent <audio> loops, speech
+ * unlocks): they make iOS pause the user's music. Native app: AppDelegate sets
+ * .playback + .mixWithOthers, which mixes and also plays on silent.
  */
-let keepAlive: HTMLAudioElement | null = null
-
-function silentWavUrl(): string {
-  const rate = 8000
-  const samples = rate / 2 // 0.5 s
-  const buf = new ArrayBuffer(44 + samples)
-  const v = new DataView(buf)
-  const str = (o: number, t: string) => {
-    for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i))
-  }
-  str(0, 'RIFF')
-  v.setUint32(4, 36 + samples, true)
-  str(8, 'WAVE')
-  str(12, 'fmt ')
-  v.setUint32(16, 16, true)
-  v.setUint16(20, 1, true) // PCM
-  v.setUint16(22, 1, true) // mono
-  v.setUint32(24, rate, true)
-  v.setUint32(28, rate, true)
-  v.setUint16(32, 1, true)
-  v.setUint16(34, 8, true) // 8-bit
-  str(36, 'data')
-  v.setUint32(40, samples, true)
-  for (let i = 0; i < samples; i++) v.setUint8(44 + i, 128) // 8-bit silence
-  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }))
-}
-
-/**
- * Safari can't both mix with other apps' music and play through the silent switch.
- * "Mix with music" (default): ambient audio — music keeps playing, but the ringer
- * switch on silent mutes our sounds. Off: media-playback mode — plays on silent, but
- * iOS pauses other music. The native app does both (AppDelegate: .playback + .mixWithOthers).
- */
-const MIX_KEY = 'mixWithMusic'
-let mixWithMusic = readMix()
-
-function readMix(): boolean {
-  try {
-    return localStorage.getItem(MIX_KEY) !== '0'
-  } catch {
-    return true
-  }
-}
-
-export function getMixWithMusic() {
-  return mixWithMusic
-}
-
-/** Call from a tap (switching to "play on silent" on older iOS starts an <audio> element). */
-export function setMixWithMusic(on: boolean) {
-  mixWithMusic = on
-  try {
-    localStorage.setItem(MIX_KEY, on ? '1' : '0')
-  } catch {
-    // ignore
-  }
-  applyAudioMode()
-}
-
 function applyAudioMode() {
   if (Capacitor.isNativePlatform()) return
   const nav = navigator as Navigator & { audioSession?: { type: string } }
-  if (mixWithMusic) {
-    if (nav.audioSession && nav.audioSession.type !== 'ambient') nav.audioSession.type = 'ambient'
-    if (keepAlive && !keepAlive.paused) keepAlive.pause()
-    return
-  }
-  if (nav.audioSession) {
-    if (nav.audioSession.type !== 'playback') nav.audioSession.type = 'playback'
-    return
-  }
-  if (!keepAlive) {
-    keepAlive = document.createElement('audio')
-    keepAlive.setAttribute('x-webkit-airplay', 'deny')
-    keepAlive.setAttribute('playsinline', '')
-    keepAlive.preload = 'auto'
-    keepAlive.loop = true
-    keepAlive.src = silentWavUrl()
-  }
-  if (keepAlive.paused) void keepAlive.play()?.catch(() => {})
+  if (nav.audioSession && nav.audioSession.type !== 'ambient') nav.audioSession.type = 'ambient'
 }
-
-/**
- * Note: we deliberately never switch the audio mode back after a workout
- * (no audioSession 'auto', no pausing for its own sake). Switching it on and off
- * between workouts interrupted Web Audio on older iPhones.
- */
 
 /** When the context last went from running to not running (0 = it's running). */
 let notRunningSince = 0
@@ -174,11 +93,6 @@ export function startFreshAudio() {
     ctx = null
   }
   notRunningSince = 0
-  // Restart the silent loop too (iOS < 17, play-on-silent mode), still inside the tap.
-  if (keepAlive && !mixWithMusic) {
-    keepAlive.pause()
-    keepAlive.currentTime = 0
-  }
   unlockAudio()
 }
 
@@ -192,9 +106,7 @@ export function audioDebug(): string {
     `made:${contextsCreated}`,
     `skip:${skippedSounds}/${v.skippedClips}`,
     `clips:${v.clips}`,
-    `mix:${mixWithMusic ? 'on' : 'off'}`,
     `session:${nav.audioSession ? nav.audioSession.type : 'n/a'}`,
-    `loop:${keepAlive ? (keepAlive.paused ? 'paused' : 'on') : 'n/a'}`,
   ].join(' ')
 }
 
@@ -320,8 +232,6 @@ function tone(c: AudioContext, o: ToneOpts) {
 /** Plays a sound `offset` seconds from now. Returns its duration in seconds. */
 export function playSound(id: SoundId, offset = 0): number {
   if (id === 'none') return 0
-  // iOS can pause the silent loop (calls, notifications); try to restart it.
-  if (!mixWithMusic && keepAlive?.paused) void keepAlive.play()?.catch(() => {})
   const c = getCtx()
   if (!canPlayNow(c)) {
     skippedSounds++

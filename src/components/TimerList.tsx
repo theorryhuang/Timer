@@ -1,6 +1,4 @@
-import { Capacitor } from '@capacitor/core'
 import { useState } from 'react'
-import { getMixWithMusic, setMixWithMusic } from '../lib/sounds'
 import { formatTime, totalSeconds } from '../lib/sequence'
 import { ACCENTS } from '../lib/theme'
 import type { WorkoutTimer } from '../lib/types'
@@ -22,8 +20,6 @@ export function TimerList({
   /** Timer whose delete button was tapped once and now asks to confirm. */
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const isEditing = editing && timers.length > 0
-  const [mix, setMix] = useState(getMixWithMusic)
-  const showMix = !Capacitor.isNativePlatform() // the installed app always mixes and plays on silent
 
   return (
     <div className="flex h-full flex-col bg-zinc-950">
@@ -119,31 +115,6 @@ export function TimerList({
             </div>
           </div>
         ))}
-
-        {showMix && (
-          <button
-            type="button"
-            role="switch"
-            aria-checked={mix}
-            onClick={() => {
-              setMixWithMusic(!mix)
-              setMix(!mix)
-            }}
-            className="mt-6 flex w-full items-center justify-between gap-4 rounded-2xl bg-zinc-900 p-4 text-left active:bg-zinc-800"
-          >
-            <span>
-              <span className="block font-semibold text-white">Play with my music</span>
-              <span className="mt-1 block text-xs leading-snug text-zinc-500">
-                {mix
-                  ? 'Your music keeps playing. Timer sounds are muted when the ringer switch is on silent.'
-                  : 'Timer sounds play even on silent, but other music pauses during a workout.'}
-              </span>
-            </span>
-            <span className={`relative h-8 w-[3.25rem] shrink-0 rounded-full transition-colors ${mix ? 'bg-emerald-500' : 'bg-zinc-700'}`}>
-              <span className={`absolute top-0.5 h-7 w-7 rounded-full bg-white shadow transition-all ${mix ? 'left-[1.375rem]' : 'left-0.5'}`} />
-            </span>
-          </button>
-        )}
       </main>
     </div>
   )
