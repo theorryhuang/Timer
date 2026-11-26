@@ -18,7 +18,7 @@ Always run `npm run build` after changes to check types; then `npx cap sync ios`
 ## Layout
 
 - `src/App.tsx` — view state machine: list → edit → run. Owns the timer list and persists it.
-- `src/components/TimerList.tsx` — home screen; play button calls `keepScreenOn()` + `startFreshAudio()` inside the tap (iOS requires a user gesture).
+- `src/components/TimerList.tsx` — home screen; its ▶ only opens the workout screen (paused at the start); nothing plays yet.
 - `src/components/TimerEditor.tsx` — create/edit form, duplicate, delete.
 - `src/components/RunScreen.tsx` — workout engine + UI. Engine state lives in a ref (`Engine`); a 50 ms `setInterval` calls `tick()`. Time is computed from `performance.now()` (start time + carried ms from pauses), not by counting ticks, so it doesn't drift.
 - `src/components/inputs.tsx` — `NumberField` and `DurationField` (min/sec boxes); typed values are saved when the field loses focus.
@@ -44,6 +44,7 @@ Always run `npm run build` after changes to check types; then `npx cap sync ios`
   - `tickSound` — clock tick every second, including while the voice is counting. Not played at the moment a phase starts (the transition sound covers that).
   - There is **no** finish sound (removed on purpose).
 - Deleting timers: **Edit** on the main list shows a trash button per timer (tap, then tap **Delete** to confirm); there's also a **Delete Timer** button at the bottom of the edit screen.
+- **Starting a workout is two taps (decided with the user):** ▶ on the Timers list opens the workout screen paused at the start ("Tap ▶ to start"); the big ▶ there starts it. That Start tap calls `keepScreenOn()` + `startFreshAudio()` (must be inside a tap for iOS). Before starting, ✕ goes straight back and the restart button is hidden.
 - Run screen: pause/resume, previous/next step, restart from beginning (asks for confirmation), end workout (asks for confirmation). Opening a confirmation pauses; "Keep Going" resumes only if the workout was running before.
 - Portrait only, dark UI, screen kept awake during a workout, heavy haptic on each phase change.
 

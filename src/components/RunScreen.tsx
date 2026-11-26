@@ -26,10 +26,13 @@ const haptic = () => void Haptics.impact({ style: ImpactStyle.Heavy }).catch(() 
 
 export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () => void }) {
   const steps = useMemo(() => buildSteps(timer), [timer])
-  const eng = useRef<Engine>({ idx: 0, startedAt: performance.now(), carried: 0, running: true, done: false, lastSpoken: -1, lastTick: -1 })
+  const eng = useRef<Engine>({ idx: 0, startedAt: performance.now(), carried: 0, running: false, done: false, lastSpoken: -1, lastTick: -1 })
   const [, force] = useState(0)
   /** False until the audio clock is running; the workout clock starts only then. */
   const [ready, setReady] = useState(false)
+  /** The screen opens paused at the start; the workout begins only when the user taps Start here. */
+  const [started, setStarted] = useState(false)
+  const startedRef = useRef(false)
   /** Open the site with ?debug to show live audio state (for diagnosing iPhone audio). */
   const debug = useMemo(() => /[?&]debug/.test(window.location.search), [])
   /** Increments on every (re)start; a pending start whose number is stale is dropped. */
@@ -125,12 +128,20 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
     })
   }, [tick, timer])
 
-  useEffect(() => {
+  /** First Start tap on this screen. Must run inside the tap so iOS allows audio. */
+  const start = () => {
     keepScreenOn()
+    startFreshAudio()
+    startedRef.current = true
+    setStarted(true)
     begin()
+  }
+
+  useEffect(() => {
     const id = setInterval(tick, 50)
     // Any tap re-arms sound and screen-on, in case iOS cut them off mid-workout.
     const rearm = () => {
+      if (!startedRef.current) return
       unlockAudio()
       if (!eng.current.done) keepScreenOn()
     }
@@ -190,6 +201,8 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
   const restart = () => {
     keepScreenOn()
     startFreshAudio()
+    startedRef.current = true
+    setStarted(true)
     clearTimeout(completeTimer.current)
     stopSpeaking()
     const e = eng.current
@@ -253,7 +266,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
       <header className="flex items-center justify-between px-4 pt-3">
         <div className="flex gap-2">
           <button
-            onClick={() => openConfirm('exit')}
+            onClick={() => (started ? openConfirm('exit') : onExit())}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-black/20 active:bg-black/30"
             aria-label="End workout"
           >
@@ -261,6 +274,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
               <path d="M5.3 5.3a1 1 0 0 1 1.4 0L10 8.6l3.3-3.3a1 1 0 1 1 1.4 1.4L11.4 10l3.3 3.3a1 1 0 0 1-1.4 1.4L10 11.4l-3.3 3.3a1 1 0 0 1-1.4-1.4L8.6 10 5.3 6.7a1 1 0 0 1 0-1.4Z" />
             </svg>
           </button>
+          {started && (
           <button
             onClick={() => openConfirm('reset')}
             className="flex h-10 w-10 items-center justify-center rounded-full bg-black/20 active:bg-black/30"
@@ -271,6 +285,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
               <path d="M3.5 3v3.5H7" />
             </svg>
           </button>
+          )}
         </div>
         <div className="truncate px-3 text-center text-sm font-semibold text-white/80">{timer.name}</div>
         <div className="text-right text-sm tabular-nums text-white/80">
@@ -304,7 +319,8 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-2xl font-bold uppercase tracking-widest">{PHASE_SHORT[step.kind]}</div>
             <div className="text-[clamp(4rem,22vw,7rem)] font-bold leading-none tabular-nums">{formatTime(Math.ceil(remainingMs / 1000))}</div>
-            {ready && !e.running && <div className="mt-2 text-sm font-semibold uppercase tracking-widest text-white/80">Paused</div>}
+            {!started && <div className="mt-2 text-sm font-semibold uppercase tracking-widest text-white/80">Tap ▶ to start</div>}
+            {started && ready && !e.running && <div className="mt-2 text-sm font-semibold uppercase tracking-widest text-white/80">Paused</div>}
           </div>
         </div>
       </div>
@@ -325,8 +341,8 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
           <path d="M6 5a1 1 0 0 1 1 1v3.3l7.4-4.6A1 1 0 0 1 16 5.5v9a1 1 0 0 1-1.6.8L7 10.7V14a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Z" />
         </CtrlButton>
         <button
-          onClick={e.running ? pause : resume}
-          aria-label={e.running ? 'Pause' : 'Resume'}
+          onClick={!started ? start : e.running ? pause : resume}
+          aria-label={!started ? 'Start' : e.running ? 'Pause' : 'Resume'}
           className="flex h-24 w-24 items-center justify-center rounded-full bg-white text-zinc-900 shadow-lg active:scale-95"
         >
           {e.running ? (

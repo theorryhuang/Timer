@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react'
 import { RunScreen } from './components/RunScreen'
 import { TimerEditor } from './components/TimerEditor'
 import { TimerList } from './components/TimerList'
-import { startFreshAudio } from './lib/sounds'
-import { keepScreenOn } from './lib/wake'
 import { prefetchVoice } from './lib/voice'
 import { loadTimers, saveTimers } from './lib/storage'
 import { newTimer, uid, type WorkoutTimer } from './lib/types'
@@ -65,12 +63,8 @@ export default function App() {
       onNew={() => setView({ kind: 'edit', timer: newTimer(), isNew: true })}
       onEdit={(t) => setView({ kind: 'edit', timer: t, isNew: false })}
       onDelete={(t) => update(timers.filter((x) => x.id !== t.id))}
-      onStart={(t) => {
-        // Must happen inside the tap so iOS allows sound and speech.
-        keepScreenOn()
-        startFreshAudio()
-        setView({ kind: 'run', timer: t })
-      }}
+      // Opens the workout screen paused; the workout starts from the Start button there.
+      onStart={(t) => setView({ kind: 'run', timer: t })}
     />
   )
 }
