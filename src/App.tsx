@@ -3,7 +3,6 @@ import { RunScreen } from './components/RunScreen'
 import { TimerEditor } from './components/TimerEditor'
 import { TimerList } from './components/TimerList'
 import { startFreshAudio } from './lib/sounds'
-import { unlockSpeech } from './lib/speech'
 import { keepScreenOn } from './lib/wake'
 import { prefetchVoice } from './lib/voice'
 import { loadTimers, saveTimers } from './lib/storage'
@@ -70,7 +69,6 @@ export default function App() {
         // Must happen inside the tap so iOS allows sound and speech.
         keepScreenOn()
         startFreshAudio()
-        unlockSpeech()
         setView({ kind: 'run', timer: t })
       }}
     />

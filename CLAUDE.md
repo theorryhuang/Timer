@@ -18,7 +18,7 @@ Always run `npm run build` after changes to check types; then `npx cap sync ios`
 ## Layout
 
 - `src/App.tsx` — view state machine: list → edit → run. Owns the timer list and persists it.
-- `src/components/TimerList.tsx` — home screen; play button calls `unlockAudio()`/`unlockSpeech()` inside the tap (iOS requires a user gesture).
+- `src/components/TimerList.tsx` — home screen; play button calls `keepScreenOn()` + `startFreshAudio()` inside the tap (iOS requires a user gesture).
 - `src/components/TimerEditor.tsx` — create/edit form, duplicate, delete.
 - `src/components/RunScreen.tsx` — workout engine + UI. Engine state lives in a ref (`Engine`); a 50 ms `setInterval` calls `tick()`. Time is computed from `performance.now()` (start time + carried ms from pauses), not by counting ticks, so it doesn't drift.
 - `src/components/inputs.tsx` — `NumberField` and `DurationField` (min/sec boxes); typed values are saved when the field loses focus.
@@ -63,6 +63,7 @@ Always run `npm run build` after changes to check types; then `npx cap sync ios`
   - Never call `crypto.randomUUID()` directly; use `uid()` from `src/lib/types.ts`. `randomUUID` doesn't exist on non-https pages or older iOS.
   - Web Audio: never chain `a.connect(b).connect(c)`; on Safari < 14.1 `connect` returns undefined and throws, so no sound plays.
   - **"Play with my music" switch (Safari only, on the Timers screen, default ON)**: Safari can't both mix with other apps' music and play through the silent switch. ON → `audioSession.type = 'ambient'`, no silent loop: music keeps playing, the ringer switch on silent mutes our sounds. OFF → `'playback'` (iOS 17+) or a looping silent `<audio>` clip (older iOS): plays on silent, other music pauses. Stored in localStorage `mixWithMusic`; logic in `applyAudioMode()` in `sounds.ts`. The native app needs no switch: AppDelegate's `.playback` + `.mixWithOthers` does both. Within a mode, don't toggle the audio mode between workouts: that interrupted Web Audio on older iPhones.
+  - **Never use Safari's `speechSynthesis` when mixing with music** (no "unlock" utterances either). iOS speech takes over the audio: it paused the user's music when a workout started, and music started afterwards cut the timer off. `speak()` skips the web TTS fallback when `getMixWithMusic()` is on; the recorded clips cover the countdown.
   - **Screen-on on the web** uses only the Screen Wake Lock API (`wake.ts`; https + iOS 16.4+). Where it's unavailable we do nothing and the phone's Auto-Lock setting applies. Don't bring back hidden-video tricks (NoSleep.js): its looping video has an audio track that fought the silent `<audio>` clip and broke sounds on an iPhone 13 Pro Max.
   - **Every start** (first run, restart, "Do it again") goes through `begin()` in `RunScreen.tsx`: wait for `whenAudioReady()` (audio clock running steadily for 0.5 s, max 3 s), then start the workout clock. On older iPhones audio takes a moment to start after the tap; without this wait the first second's tick was lost.
   - Backup: for 3 s after a start (`allowQueuedStart()`), sounds made while audio is interrupted are held and played when it returns (`soundOutput()` in `voice.ts`), capped at ~1 s of sounds so there's never a burst. All sounds must connect via `soundOutput(c)`, not `c.destination`.
