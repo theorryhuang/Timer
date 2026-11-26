@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { RunScreen } from './components/RunScreen'
 import { TimerEditor } from './components/TimerEditor'
 import { TimerList } from './components/TimerList'
-import { unlockAudio } from './lib/sounds'
+import { startFreshAudio } from './lib/sounds'
 import { unlockSpeech } from './lib/speech'
 import { keepScreenOn } from './lib/wake'
 import { prefetchVoice } from './lib/voice'
@@ -69,7 +69,7 @@ export default function App() {
       onStart={(t) => {
         // Must happen inside the tap so iOS allows sound and speech.
         keepScreenOn()
-        unlockAudio()
+        startFreshAudio()
         unlockSpeech()
         setView({ kind: 'run', timer: t })
       }}

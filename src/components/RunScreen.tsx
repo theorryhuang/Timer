@@ -1,7 +1,7 @@
 import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { buildSteps, formatTime } from '../lib/sequence'
-import { playSound, unlockAudio, whenAudioReady } from '../lib/sounds'
+import { audioDebug, playSound, startFreshAudio, unlockAudio, whenAudioReady } from '../lib/sounds'
 import { allowQueuedStart } from '../lib/voice'
 import { allowScreenOff, keepScreenOn } from '../lib/wake'
 import { speakComplete, speakNumber, stopSpeaking } from '../lib/speech'
@@ -30,6 +30,8 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
   const [, force] = useState(0)
   /** False until the audio clock is running; the workout clock starts only then. */
   const [ready, setReady] = useState(false)
+  /** Open the site with ?debug to show live audio state (for diagnosing iPhone audio). */
+  const debug = useMemo(() => /[?&]debug/.test(window.location.search), [])
   /** Increments on every (re)start; a pending start whose number is stale is dropped. */
   const startSeq = useRef(0)
   const starting = useRef(false)
@@ -187,6 +189,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
 
   const restart = () => {
     keepScreenOn()
+    startFreshAudio()
     clearTimeout(completeTimer.current)
     stopSpeaking()
     const e = eng.current
@@ -219,6 +222,7 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
       <div className="flex h-full flex-col items-center justify-center gap-6 bg-zinc-950 px-8 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] text-center text-white">
         <div className="text-6xl">🏁</div>
         <h1 className="text-4xl font-bold">Workout complete</h1>
+        {debug && <p className="font-mono text-[10px] text-zinc-500">{audioDebug()}</p>}
         <p className="text-zinc-400">
           {timer.name} · {formatTime(totalMs / 1000)}
         </p>
@@ -238,6 +242,9 @@ export function RunScreen({ timer, onExit }: { timer: WorkoutTimer; onExit: () =
     <div
       className={`relative flex h-full flex-col text-white transition-colors duration-500 ${PHASE_BG[step.kind]} pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+0.5rem)]`}
     >
+      {debug && (
+        <div className="absolute bottom-1 left-0 right-0 z-30 px-2 text-center font-mono text-[10px] text-white/80">{audioDebug()}</div>
+      )}
       {/* overall progress */}
       <div className="mx-4 h-1.5 overflow-hidden rounded-full bg-black/20">
         <div className="h-full rounded-full bg-white/90" style={{ width: `${(doneMs / totalMs) * 100}%` }} />

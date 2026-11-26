@@ -44,6 +44,11 @@ function decode(c: AudioContext, data: ArrayBuffer): Promise<AudioBuffer> {
 
 /** Decode all clips into the given context. Safe to call repeatedly. */
 export function loadVoice(c: AudioContext): Promise<void> {
+  if (ctx && ctx !== c) {
+    // Switched to a fresh context: drop nodes that belonged to the old one.
+    current = null
+    waiting.length = 0
+  }
   ctx = c
   if (!decoding) {
     // KEYS starts at "1", so the most-used small numbers are ready first.
@@ -65,6 +70,12 @@ export function loadVoice(c: AudioContext): Promise<void> {
 }
 
 let unlockedAt = 0
+let skippedClips = 0
+
+/** For the ?debug readout. */
+export function voiceDebug() {
+  return { clips: buffers.size, skippedClips }
+}
 
 /** Record that audio was just unlocked by a tap (resume() is then in flight and will succeed). */
 export function markUnlocked() {
@@ -133,7 +144,10 @@ export function playClip(key: string): boolean {
   if (!ctx || !buf) return false
   stopClip()
   // Clip is loaded but audio is suspended: skip it (return true) rather than let it play late.
-  if (!canPlayNow(ctx)) return true
+  if (!canPlayNow(ctx)) {
+    skippedClips++
+    return true
+  }
   const src = ctx.createBufferSource()
   const gain = ctx.createGain()
   gain.gain.value = 1

@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core'
-import { canPlayNow, loadVoice, markUnlocked, soundOutput } from './voice'
+import { canPlayNow, loadVoice, markUnlocked, soundOutput, voiceDebug } from './voice'
 
 /**
  * Synthesized transition sounds (Web Audio). No audio files needed.
@@ -51,11 +51,14 @@ export const TICK_OPTIONS: { id: SoundId; label: string }[] = [
 ]
 
 let ctx: AudioContext | null = null
+let contextsCreated = 0
+let skippedSounds = 0
 
 function getCtx(): AudioContext {
   if (!ctx) {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
     ctx = new Ctor()
+    contextsCreated++
   }
   return ctx
 }
@@ -119,6 +122,44 @@ function bypassSilentSwitch() {
 
 /** When the context last went from running to not running (0 = it's running). */
 let notRunningSince = 0
+/**
+ * Start a workout with a brand-new audio context, exactly like a freshly loaded
+ * page. On iPhones the first run after loading always worked while later runs
+ * lost sound, so we never reuse a context across workouts. Call from a tap.
+ */
+export function startFreshAudio() {
+  if (ctx) {
+    try {
+      void ctx.close()
+    } catch {
+      // ignore
+    }
+    ctx = null
+  }
+  notRunningSince = 0
+  // Restart the silent loop too (iOS < 17), still inside the tap.
+  if (keepAlive) {
+    keepAlive.pause()
+    keepAlive.currentTime = 0
+  }
+  unlockAudio()
+}
+
+/** One-line audio state for the ?debug readout on the run screen. */
+export function audioDebug(): string {
+  const nav = navigator as Navigator & { audioSession?: { type: string } }
+  const v = voiceDebug()
+  return [
+    `ctx:${ctx ? ctx.state : 'none'}`,
+    `t:${ctx ? ctx.currentTime.toFixed(1) : '-'}`,
+    `made:${contextsCreated}`,
+    `skip:${skippedSounds}/${v.skippedClips}`,
+    `clips:${v.clips}`,
+    `session:${nav.audioSession ? nav.audioSession.type : 'n/a'}`,
+    `loop:${keepAlive ? (keepAlive.paused ? 'paused' : 'on') : 'n/a'}`,
+  ].join(' ')
+}
+
 /** Must be called from a user gesture (tap) so iOS allows audio. */
 export function unlockAudio() {
   bypassSilentSwitch()
@@ -244,7 +285,10 @@ export function playSound(id: SoundId, offset = 0): number {
   // iOS can pause the silent loop (calls, notifications); try to restart it.
   if (keepAlive?.paused) void keepAlive.play()?.catch(() => {})
   const c = getCtx()
-  if (!canPlayNow(c)) return 0
+  if (!canPlayNow(c)) {
+    skippedSounds++
+    return 0
+  }
   const t = c.currentTime + offset
 
   switch (id) {
